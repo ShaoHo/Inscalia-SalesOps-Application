@@ -12,7 +12,7 @@ jobs:
       run:
         working-directory: backend
     env:
-      OPENAI_API_KEY: d6ee18fdc6db616b50f54053c93da01ad60fe449
+      OPENAI_API_KEY: ${{ secrets.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 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
