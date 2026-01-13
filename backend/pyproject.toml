@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "salesops-backend"
+version = "0.1.0"
+description = "SalesOps FastAPI backend"
+authors = ["SalesOps Team <salesops@example.com>"]
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.110.0"
+uvicorn = { extras = ["standard"], version = "^0.27.0" }
+pydantic-settings = "^2.2.1"
+psycopg = { extras = ["binary"], version = "^3.1.18" }
+celery = "^5.3.6"
+redis = "^5.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+httpx = "^0.26.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
