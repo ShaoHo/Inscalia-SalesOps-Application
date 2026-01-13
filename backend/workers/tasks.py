@@ -1,8 +1,284 @@
-from datetime import datetime
+from __future__ import annotations
 
+import json
+from datetime import datetime
+from typing import Any, Callable
+
+import redis
+
+from app.config import settings
 from workers.celery_app import celery_app
+
+
+RedisClient = redis.Redis[str]
+
+
+def get_redis_client() -> RedisClient:
+    return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def build_idempotency_key(
+    intent_id: str,
+    task_type: str,
+    entity_id: str | None,
+    version: str | None = None,
+) -> str:
+    parts = [intent_id, task_type, entity_id or "none"]
+    if version:
+        parts.append(version)
+    return ":".join(parts)
+
+
+def run_idempotent_task(
+    task_type: str,
+    intent_id: str,
+    entity_id: str | None,
+    payload: dict[str, Any],
+    version: str | None,
+    handler: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    client = get_redis_client()
+    idempotency_key = build_idempotency_key(intent_id, task_type, entity_id, version)
+    lock_key = f"lock:{idempotency_key}"
+    result_key = f"result:{idempotency_key}"
+
+    existing = client.get(result_key)
+    if existing:
+        return json.loads(existing)
+
+    acquired = client.set(lock_key, "1", nx=True, ex=300)
+    if not acquired:
+        existing = client.get(result_key)
+        if existing:
+            return json.loads(existing)
+        return {
+            "status": "locked",
+            "task_type": task_type,
+            "idempotency_key": idempotency_key,
+        }
+
+    try:
+        result = handler(payload)
+        response = {
+            "status": "success",
+            "task_type": task_type,
+            "idempotency_key": idempotency_key,
+            "result": result,
+        }
+        client.set(result_key, json.dumps(response), ex=86400)
+        return response
+    finally:
+        client.delete(lock_key)
 
 
 @celery_app.task
 def heartbeat() -> str:
     return f"heartbeat:{datetime.utcnow().isoformat()}"
+
+
+def search_companies_with_playwright(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    query = payload.get("query", "target accounts")
+    return [{"name": f"{query} Holdings", "source": "playwright"}]
+
+
+def search_companies_with_selenium(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    industry = payload.get("industry", "SaaS")
+    return [{"name": f"{industry} Labs", "source": "selenium"}]
+
+
+def find_contacts_with_mailscout(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    domain = payload.get("domain", "example.com")
+    return [
+        {
+            "name": "Taylor Prospect",
+            "email": f"taylor@{domain}",
+            "source": "mailscout",
+        }
+    ]
+
+
+def find_contacts_with_theharvester(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    domain = payload.get("domain", "example.com")
+    return [
+        {
+            "name": "Jordan Lead",
+            "email": f"jordan@{domain}",
+            "source": "theharvester",
+        }
+    ]
+
+
+def collect_news_with_newsapi(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    topic = payload.get("topic", "sales")
+    return [
+        {
+            "title": f"{topic.title()} market update",
+            "url": "https://news.example.com/story",
+            "source": "newsapi",
+        }
+    ]
+
+
+def parse_articles_with_newspaper(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "title": article["title"],
+            "summary": f"Summary for {article['title']}",
+            "source": "newspaper3k",
+        }
+        for article in articles
+    ]
+
+
+def generate_email_with_template(payload: dict[str, Any]) -> dict[str, Any]:
+    recipient = payload.get("recipient", "Prospect")
+    company = payload.get("company", "your company")
+    return {
+        "subject": f"Idea for {recipient}",
+        "body": f"Hi {recipient}, I noticed {company} could benefit from SalesOps.",
+        "channel": "email",
+    }
+
+
+def build_schedule_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    next_step = payload.get("next_step", "follow_up")
+    due_date = payload.get("due_date", "2024-01-01")
+    return {"next_step": next_step, "due_date": due_date, "status": "scheduled"}
+
+
+def score_pipeline_bant(payload: dict[str, Any]) -> dict[str, Any]:
+    bant = payload.get("bant", {"budget": 3, "authority": 3, "need": 3, "timing": 3})
+    score = sum(bant.values())
+    return {"bant": bant, "score": score, "qualified": score >= 10}
+
+
+def _company_search(payload: dict[str, Any]) -> dict[str, Any]:
+    companies = search_companies_with_playwright(payload)
+    companies.extend(search_companies_with_selenium(payload))
+    return {"companies": companies}
+
+
+def _contact_finder(payload: dict[str, Any]) -> dict[str, Any]:
+    contacts = find_contacts_with_mailscout(payload)
+    contacts.extend(find_contacts_with_theharvester(payload))
+    return {"contacts": contacts}
+
+
+def _news_collector(payload: dict[str, Any]) -> dict[str, Any]:
+    articles = collect_news_with_newsapi(payload)
+    summaries = parse_articles_with_newspaper(articles)
+    return {"articles": articles, "summaries": summaries}
+
+
+def _email_generator(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"email": generate_email_with_template(payload)}
+
+
+def _scheduler(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"schedule": build_schedule_plan(payload)}
+
+
+def _pipeline_bant(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"assessment": score_pipeline_bant(payload)}
+
+
+@celery_app.task
+def company_search(
+    intent_id: str,
+    entity_id: str | None,
+    payload: dict[str, Any] | None = None,
+    version: str | None = None,
+) -> dict[str, Any]:
+    return run_idempotent_task(
+        "company_search",
+        intent_id,
+        entity_id,
+        payload or {},
+        version,
+        _company_search,
+    )
+
+
+@celery_app.task
+def contact_finder(
+    intent_id: str,
+    entity_id: str | None,
+    payload: dict[str, Any] | None = None,
+    version: str | None = None,
+) -> dict[str, Any]:
+    return run_idempotent_task(
+        "contact_finder",
+        intent_id,
+        entity_id,
+        payload or {},
+        version,
+        _contact_finder,
+    )
+
+
+@celery_app.task
+def news_collector(
+    intent_id: str,
+    entity_id: str | None,
+    payload: dict[str, Any] | None = None,
+    version: str | None = None,
+) -> dict[str, Any]:
+    return run_idempotent_task(
+        "news_collector",
+        intent_id,
+        entity_id,
+        payload or {},
+        version,
+        _news_collector,
+    )
+
+
+@celery_app.task
+def email_generator(
+    intent_id: str,
+    entity_id: str | None,
+    payload: dict[str, Any] | None = None,
+    version: str | None = None,
+) -> dict[str, Any]:
+    return run_idempotent_task(
+        "email_generator",
+        intent_id,
+        entity_id,
+        payload or {},
+        version,
+        _email_generator,
+    )
+
+
+@celery_app.task
+def scheduler(
+    intent_id: str,
+    entity_id: str | None,
+    payload: dict[str, Any] | None = None,
+    version: str | None = None,
+) -> dict[str, Any]:
+    return run_idempotent_task(
+        "scheduler",
+        intent_id,
+        entity_id,
+        payload or {},
+        version,
+        _scheduler,
+    )
+
+
+@celery_app.task
+def pipeline_bant(
+    intent_id: str,
+    entity_id: str | None,
+    payload: dict[str, Any] | None = None,
+    version: str | None = None,
+) -> dict[str, Any]:
+    return run_idempotent_task(
+        "pipeline_bant",
+        intent_id,
+        entity_id,
+        payload or {},
+        version,
+        _pipeline_bant,
+    )
