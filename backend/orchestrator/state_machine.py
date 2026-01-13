@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Iterable
 
 from audit_log import AuditLogStore, get_default_audit_log_store
+from orchestrator.deadletter_store import DeadLetterStore, get_default_deadletter_store
 from orchestrator.models import Task, TaskStatus
 
 _ALLOWED_TRANSITIONS: set[tuple[TaskStatus, TaskStatus]] = {
@@ -21,9 +22,11 @@ class TaskStateMachine:
         self,
         allowed_transitions: Iterable[tuple[TaskStatus, TaskStatus]] | None = None,
         audit_log_store: AuditLogStore | None = None,
+        deadletter_store: DeadLetterStore | None = None,
     ) -> None:
         self._allowed_transitions = set(allowed_transitions or _ALLOWED_TRANSITIONS)
         self._audit_log_store = audit_log_store or get_default_audit_log_store()
+        self._deadletter_store = deadletter_store or get_default_deadletter_store()
 
     def can_transition(self, current: TaskStatus, target: TaskStatus) -> bool:
         return (current, target) in self._allowed_transitions
@@ -45,11 +48,12 @@ class TaskStateMachine:
     def schedule_retry(self, task: Task, *, max_retries: int) -> Task:
         if task.status != TaskStatus.failed:
             raise ValueError("Task must be in failed state to schedule retry.")
-        next_status = (
-            TaskStatus.retrying if task.retry_count < max_retries else TaskStatus.deadletter
-        )
         next_task = replace(task, retry_count=task.retry_count + 1)
-        return self.transition(next_task, next_status)
+        if task.retry_count < max_retries:
+            return self.transition(next_task, TaskStatus.retrying)
+        transitioned = self.transition(next_task, TaskStatus.deadletter)
+        self._deadletter_store.append(transitioned, "retry_limit_exhausted")
+        return transitioned
 
     def requeue(self, task: Task) -> Task:
         return self.transition(task, TaskStatus.queued)

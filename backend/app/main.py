@@ -5,6 +5,8 @@ from jsonschema import Draft7Validator
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings
+from app.schemas import DeadLetterItemRead, DeadLetterTask
+from orchestrator.deadletter_store import get_default_deadletter_store
 
 app = FastAPI(title=settings.app_name)
 
@@ -96,3 +98,27 @@ async def health_check() -> dict[str, str]:
 async def create_intent(payload: dict = Body(...)) -> SalesOpsIntent:
     validate_intent_schema(payload)
     return SalesOpsIntent.model_validate(payload)
+
+
+@app.get("/deadletter", response_model=list[DeadLetterItemRead], tags=["deadletter"])
+async def list_deadletter(limit: int = 50) -> list[DeadLetterItemRead]:
+    store = get_default_deadletter_store()
+    items = store.list(limit=limit)
+    return [
+        DeadLetterItemRead(
+            id=item.id,
+            reason=item.reason,
+            deadlettered_at=item.deadlettered_at,
+            task=DeadLetterTask(
+                task_id=item.task.task_id,
+                intent_id=item.task.intent_id,
+                task_type=item.task.task_type,
+                status=item.task.status.value,
+                retry_count=item.task.retry_count,
+                idempotency_key=item.task.idempotency_key,
+                payload=item.task.payload,
+                created_at=item.task.created_at,
+            ),
+        )
+        for item in items
+    ]

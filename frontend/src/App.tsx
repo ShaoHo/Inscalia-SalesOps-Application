@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type PipelineStage =
   | "Identified"
@@ -48,6 +48,7 @@ type DeadLetterTask = {
   task: string;
   reason: string;
   attemptedAt: string;
+  retryCount?: number;
 };
 
 const PIPELINE_STAGES: PipelineStage[] = [
@@ -249,26 +250,40 @@ const initialBant: BantRecord[] = [
   },
 ];
 
-const deadLetterTasks: DeadLetterTask[] = [
+const DEADLETTER_FALLBACK: DeadLetterTask[] = [
   {
     id: "dl-204",
     task: "enrich_company",
     reason: "3rd party enrichment timeout",
     attemptedAt: "2024-05-20 09:42",
+    retryCount: 3,
   },
   {
     id: "dl-219",
     task: "generate_sequence",
     reason: "LLM response exceeded token budget",
     attemptedAt: "2024-05-20 10:18",
+    retryCount: 2,
   },
   {
     id: "dl-233",
     task: "news_digest",
     reason: "Rate limit from News API",
     attemptedAt: "2024-05-20 11:04",
+    retryCount: 4,
   },
 ];
+
+type DeadLetterApiItem = {
+  id: number;
+  reason: string;
+  deadlettered_at: string;
+  task: {
+    task_id: string;
+    task_type: string;
+    retry_count: number;
+  };
+};
 
 const fieldOptions: BantField[] = ["Confirmed", "In progress", "Missing"];
 
@@ -285,11 +300,49 @@ export default function App() {
   const [bantFilter, setBantFilter] = useState<
     "All" | "Needs attention" | "Complete"
   >("All");
+  const [deadLetterTasks, setDeadLetterTasks] = useState<DeadLetterTask[]>(
+    DEADLETTER_FALLBACK,
+  );
 
   const selectedCompany = useMemo(
     () => companies.find((company) => company.id === selectedCompanyId),
     [selectedCompanyId],
   );
+
+  useEffect(() => {
+    if (!("fetch" in globalThis)) {
+      return;
+    }
+    let isMounted = true;
+    const loadDeadletter = async () => {
+      try {
+        const response = await fetch("/deadletter");
+        if (!response.ok) {
+          throw new Error("Failed to load deadletter queue.");
+        }
+        const payload = (await response.json()) as DeadLetterApiItem[];
+        if (!isMounted) {
+          return;
+        }
+        const mapped = payload.map((item) => ({
+          id: item.task.task_id ?? String(item.id),
+          task: item.task.task_type,
+          reason: item.reason,
+          attemptedAt: new Date(item.deadlettered_at).toLocaleString(),
+          retryCount: item.task.retry_count,
+        }));
+        setDeadLetterTasks(mapped.length > 0 ? mapped : DEADLETTER_FALLBACK);
+      } catch {
+        if (isMounted) {
+          setDeadLetterTasks(DEADLETTER_FALLBACK);
+        }
+      }
+    };
+    void loadDeadletter();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const selectedContact = useMemo(() => {
     if (!selectedCompany) {
@@ -805,25 +858,35 @@ export default function App() {
             Failed orchestration tasks that require manual review.
           </p>
           <div style={{ display: "grid", gap: "0.75rem" }}>
-            {deadLetterTasks.map((task) => (
-              <div
-                key={task.id}
-                style={{
-                  border: "1px solid #fecaca",
-                  background: "#fef2f2",
-                  borderRadius: "12px",
-                  padding: "0.75rem",
-                }}
-              >
-                <strong>{task.task}</strong>
-                <p style={{ margin: "0.35rem 0", color: "#b91c1c" }}>
-                  {task.reason}
-                </p>
-                <p style={{ margin: 0, fontSize: "0.85rem" }}>
-                  Attempted: {task.attemptedAt} · ID: {task.id}
-                </p>
-              </div>
-            ))}
+            {deadLetterTasks.length === 0 ? (
+              <p style={{ margin: 0, color: "#6b7280" }}>
+                No deadletter tasks in the queue.
+              </p>
+            ) : (
+              deadLetterTasks.map((task) => (
+                <div
+                  key={task.id}
+                  style={{
+                    border: "1px solid #fecaca",
+                    background: "#fef2f2",
+                    borderRadius: "12px",
+                    padding: "0.75rem",
+                  }}
+                >
+                  <strong>{task.task}</strong>
+                  <p style={{ margin: "0.35rem 0", color: "#b91c1c" }}>
+                    {task.reason}
+                  </p>
+                  <p style={{ margin: 0, fontSize: "0.85rem" }}>
+                    Attempted: {task.attemptedAt}
+                    {typeof task.retryCount === "number"
+                      ? ` · Retries: ${task.retryCount}`
+                      : ""}
+                    {" · "}ID: {task.id}
+                  </p>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </section>
