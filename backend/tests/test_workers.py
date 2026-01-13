@@ -145,21 +145,43 @@ def test_email_generator_task(monkeypatch: Any) -> None:
 def test_scheduler_task(monkeypatch: Any) -> None:
     client = InMemoryRedis()
     _attach_redis(monkeypatch, client)
-    monkeypatch.setattr(
-        tasks,
-        "build_schedule_plan",
-        lambda payload: {"next_step": "call", "due_date": "2024-06-01"},
-    )
 
     result = tasks.scheduler(
         intent_id="intent-5",
         entity_id="entity-5",
-        payload={"next_step": "call"},
+        payload={
+            "steps": [{"template": "intro"}, {"template": "follow_up"}],
+            "start_at": "2024-06-01T00:00:00+00:00",
+        },
     )
 
     assert result["status"] == "success"
     assert result["task_type"] == "scheduler"
-    assert result["result"]["schedule"]["next_step"] == "call"
+    assert result["result"]["schedule"]["cadence_days"] == 7
+    assert result["result"]["schedule"]["steps"][0]["next_send_at"] == "2024-06-01T00:00:00+00:00"
+    assert result["result"]["schedule"]["steps"][1]["next_send_at"] == "2024-06-08T00:00:00+00:00"
+
+
+def test_scheduler_pauses_after_reply(monkeypatch: Any) -> None:
+    client = InMemoryRedis()
+    _attach_redis(monkeypatch, client)
+
+    result = tasks.scheduler(
+        intent_id="intent-9",
+        entity_id="entity-9",
+        payload={
+            "steps": [{"template": "intro"}, {"template": "follow_up"}],
+            "start_at": "2024-06-01T00:00:00+00:00",
+            "contact_replied": True,
+            "completed_steps": 1,
+        },
+    )
+
+    schedule = result["result"]["schedule"]
+    assert schedule["status"] == "paused"
+    assert schedule["steps"][0]["status"] == "scheduled"
+    assert schedule["steps"][1]["status"] == "paused"
+    assert schedule["steps"][1]["next_send_at"] is None
 
 
 def test_pipeline_bant_task(monkeypatch: Any) -> None:

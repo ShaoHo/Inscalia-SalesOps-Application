@@ -35,6 +35,7 @@ class Contact(Base):
 
     account: Mapped[Account] = relationship(back_populates="contacts")
     emails: Mapped[list["Email"]] = relationship(back_populates="contact", cascade="all, delete-orphan")
+    email_steps: Mapped[list["EmailStep"]] = relationship(back_populates="contact", cascade="all, delete-orphan")
     tasks: Mapped[list["Task"]] = relationship(back_populates="contact")
 
 
@@ -52,6 +53,23 @@ class Email(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     contact: Mapped[Contact] = relationship(back_populates="emails")
+
+
+class EmailStep(Base):
+    __tablename__ = "email_steps"
+    __table_args__ = (
+        UniqueConstraint("contact_id", "step_number", name="uq_email_steps_contact_step"),
+        CheckConstraint("step_number > 0", name="ck_email_steps_step_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False)
+    step_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    next_send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    contact: Mapped[Contact] = relationship(back_populates="email_steps")
 
 
 @event.listens_for(Email, "before_update", propagate=True)

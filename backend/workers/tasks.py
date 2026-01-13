@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -215,10 +215,48 @@ def generate_email_with_template(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _parse_start_at(value: str | datetime | None, *, now: datetime) -> datetime:
+    if value is None:
+        return now
+    if isinstance(value, datetime):
+        start_at = value
+    else:
+        start_at = datetime.fromisoformat(value)
+    if start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=timezone.utc)
+    return start_at
+
+
 def build_schedule_plan(payload: dict[str, Any]) -> dict[str, Any]:
-    next_step = payload.get("next_step", "follow_up")
-    due_date = payload.get("due_date", "2024-01-01")
-    return {"next_step": next_step, "due_date": due_date, "status": "scheduled"}
+    cadence_days = int(payload.get("cadence_days", 7))
+    steps = list(payload.get("steps", []))
+    contact_replied = bool(payload.get("contact_replied", False))
+    completed_steps = int(payload.get("completed_steps", 0))
+    start_at = _parse_start_at(payload.get("start_at"), now=datetime.now(timezone.utc))
+
+    scheduled_steps: list[dict[str, Any]] = []
+    for index, step in enumerate(steps, start=1):
+        step_payload = dict(step)
+        step_payload.setdefault("step_number", index)
+        send_at = start_at + timedelta(days=cadence_days * (index - 1))
+        if contact_replied and index > completed_steps:
+            step_payload["status"] = "paused"
+            step_payload["next_send_at"] = None
+        else:
+            step_payload["status"] = "scheduled"
+            step_payload["next_send_at"] = send_at.isoformat()
+        scheduled_steps.append(step_payload)
+
+    overall_status = (
+        "paused"
+        if contact_replied and len(steps) > completed_steps
+        else "scheduled"
+    )
+    return {
+        "cadence_days": cadence_days,
+        "status": overall_status,
+        "steps": scheduled_steps,
+    }
 
 
 def score_pipeline_bant(payload: dict[str, Any]) -> dict[str, Any]:
