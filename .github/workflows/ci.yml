@@ -11,6 +11,8 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      OPENAI_API_KEY: test_dummy_key
     steps:
       - name: Checkout
         uses: actions/checkout@v4
