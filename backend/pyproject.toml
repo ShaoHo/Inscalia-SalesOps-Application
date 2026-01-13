@@ -19,6 +19,7 @@ sqlalchemy = "^2.0.30"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
 httpx = "^0.26.0"
+ruff = "^0.4.8"
 
 [build-system]
 requires = ["poetry-core"]

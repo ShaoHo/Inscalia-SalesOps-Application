@@ -73,3 +73,31 @@ npm run dev
 cd frontend
 npm test
 ```
+
+### Linting and Full Test Runs
+
+Run lint checks for both backend and frontend:
+
+```bash
+make lint
+```
+
+Run all backend + frontend tests locally:
+
+```bash
+make test
+```
+
+Individual commands:
+
+```bash
+cd backend
+poetry run ruff check --select F .
+poetry run pytest
+```
+
+```bash
+cd frontend
+npm run lint
+npm test
+```
