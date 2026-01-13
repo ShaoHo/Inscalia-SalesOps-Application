@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Iterable
 
+from audit_log import AuditLogStore, get_default_audit_log_store
 from orchestrator.models import Task, TaskStatus
 
 _ALLOWED_TRANSITIONS: set[tuple[TaskStatus, TaskStatus]] = {
@@ -16,8 +17,13 @@ _ALLOWED_TRANSITIONS: set[tuple[TaskStatus, TaskStatus]] = {
 
 
 class TaskStateMachine:
-    def __init__(self, allowed_transitions: Iterable[tuple[TaskStatus, TaskStatus]] | None = None) -> None:
+    def __init__(
+        self,
+        allowed_transitions: Iterable[tuple[TaskStatus, TaskStatus]] | None = None,
+        audit_log_store: AuditLogStore | None = None,
+    ) -> None:
         self._allowed_transitions = set(allowed_transitions or _ALLOWED_TRANSITIONS)
+        self._audit_log_store = audit_log_store or get_default_audit_log_store()
 
     def can_transition(self, current: TaskStatus, target: TaskStatus) -> bool:
         return (current, target) in self._allowed_transitions
@@ -25,7 +31,13 @@ class TaskStateMachine:
     def transition(self, task: Task, target: TaskStatus) -> Task:
         if not self.can_transition(task.status, target):
             raise ValueError(f"Invalid transition from {task.status.value} to {target.value}")
-        return replace(task, status=target)
+        next_task = replace(task, status=target)
+        self._audit_log_store.append(
+            "orchestrator.transition",
+            {"task": task.to_dict(), "target_status": target.value},
+            {"task": next_task.to_dict()},
+        )
+        return next_task
 
     def record_failure(self, task: Task) -> Task:
         return self.transition(task, TaskStatus.failed)

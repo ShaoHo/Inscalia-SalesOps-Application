@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
+import pytest
+
+from audit_log import AuditLogStore
 from workers import tasks
 
 
@@ -24,6 +28,14 @@ class InMemoryRedis:
 
 def _attach_redis(monkeypatch: Any, client: InMemoryRedis) -> None:
     monkeypatch.setattr(tasks, "get_redis_client", lambda: client)
+
+
+@pytest.fixture(autouse=True)
+def audit_log_store(monkeypatch: Any) -> AuditLogStore:
+    connection = sqlite3.connect(":memory:")
+    store = AuditLogStore(lambda: connection, close_connection=False)
+    monkeypatch.setattr(tasks, "AUDIT_LOG_STORE", store)
+    return store
 
 
 def test_company_search_task(monkeypatch: Any) -> None:

@@ -7,14 +7,20 @@ from typing import Any, Callable
 import redis
 
 from app.config import settings
+from audit_log import AuditLogStore, get_default_audit_log_store
 from workers.celery_app import celery_app
 
 
-RedisClient = redis.Redis[str]
+RedisClient = redis.Redis
+AUDIT_LOG_STORE: AuditLogStore | None = None
 
 
 def get_redis_client() -> RedisClient:
     return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def get_audit_log_store() -> AuditLogStore:
+    return AUDIT_LOG_STORE or get_default_audit_log_store()
 
 
 def build_idempotency_key(
@@ -41,21 +47,58 @@ def run_idempotent_task(
     idempotency_key = build_idempotency_key(intent_id, task_type, entity_id, version)
     lock_key = f"lock:{idempotency_key}"
     result_key = f"result:{idempotency_key}"
+    audit_log_store = get_audit_log_store()
 
     existing = client.get(result_key)
     if existing:
-        return json.loads(existing)
+        result = json.loads(existing)
+        audit_log_store.append(
+            f"worker.{task_type}",
+            {
+                "intent_id": intent_id,
+                "entity_id": entity_id,
+                "payload": payload,
+                "version": version,
+                "cached": True,
+            },
+            result,
+        )
+        return result
 
     acquired = client.set(lock_key, "1", nx=True, ex=300)
     if not acquired:
         existing = client.get(result_key)
         if existing:
-            return json.loads(existing)
-        return {
+            result = json.loads(existing)
+            audit_log_store.append(
+                f"worker.{task_type}",
+                {
+                    "intent_id": intent_id,
+                    "entity_id": entity_id,
+                    "payload": payload,
+                    "version": version,
+                    "cached": True,
+                },
+                result,
+            )
+            return result
+        result = {
             "status": "locked",
             "task_type": task_type,
             "idempotency_key": idempotency_key,
         }
+        audit_log_store.append(
+            f"worker.{task_type}",
+            {
+                "intent_id": intent_id,
+                "entity_id": entity_id,
+                "payload": payload,
+                "version": version,
+                "locked": True,
+            },
+            result,
+        )
+        return result
 
     try:
         result = handler(payload)
@@ -66,6 +109,16 @@ def run_idempotent_task(
             "result": result,
         }
         client.set(result_key, json.dumps(response), ex=86400)
+        audit_log_store.append(
+            f"worker.{task_type}",
+            {
+                "intent_id": intent_id,
+                "entity_id": entity_id,
+                "payload": payload,
+                "version": version,
+            },
+            response,
+        )
         return response
     finally:
         client.delete(lock_key)
