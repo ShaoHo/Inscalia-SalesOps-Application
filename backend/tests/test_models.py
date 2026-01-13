@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-import pytest
 
 sqlalchemy = pytest.importorskip("sqlalchemy")
 
