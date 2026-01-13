@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import Any, Callable
+from uuid import uuid4
 
 import redis
 
@@ -65,7 +66,8 @@ def run_idempotent_task(
         )
         return result
 
-    acquired = client.set(lock_key, "1", nx=True, ex=300)
+    lock_token = str(uuid4())
+    acquired = client.set(lock_key, lock_token, nx=True, ex=300)
     if not acquired:
         existing = client.get(result_key)
         if existing:
@@ -120,8 +122,28 @@ def run_idempotent_task(
             response,
         )
         return response
+    except Exception as exc:  # noqa: BLE001
+        failure_response = {
+            "status": "failed",
+            "task_type": task_type,
+            "idempotency_key": idempotency_key,
+            "error": str(exc),
+        }
+        audit_log_store.append(
+            f"worker.{task_type}",
+            {
+                "intent_id": intent_id,
+                "entity_id": entity_id,
+                "payload": payload,
+                "version": version,
+                "error": str(exc),
+            },
+            failure_response,
+        )
+        raise
     finally:
-        client.delete(lock_key)
+        if client.get(lock_key) == lock_token:
+            client.delete(lock_key)
 
 
 @celery_app.task

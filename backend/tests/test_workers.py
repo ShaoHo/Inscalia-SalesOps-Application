@@ -25,6 +25,9 @@ class InMemoryRedis:
     def delete(self, key: str) -> int:
         return 1 if self.store.pop(key, None) is not None else 0
 
+    def keys(self) -> list[str]:
+        return list(self.store.keys())
+
 
 def _attach_redis(monkeypatch: Any, client: InMemoryRedis) -> None:
     monkeypatch.setattr(tasks, "get_redis_client", lambda: client)
@@ -205,3 +208,23 @@ def test_idempotency_caches_results(monkeypatch: Any) -> None:
 
     assert first == second
     assert calls["count"] == 1
+
+
+def test_lock_idempotency_returns_locked(monkeypatch: Any) -> None:
+    client = InMemoryRedis()
+    _attach_redis(monkeypatch, client)
+    lock_key = (
+        "lock:"
+        f"{tasks.build_idempotency_key('intent-8', 'company_search', 'entity-8', 'v1')}"
+    )
+    client.set(lock_key, "token-1", nx=True)
+
+    result = tasks.company_search(
+        intent_id="intent-8",
+        entity_id="entity-8",
+        payload={"query": "Acme"},
+        version="v1",
+    )
+
+    assert result["status"] == "locked"
+    assert lock_key in client.keys()

@@ -112,3 +112,21 @@ class AuditLogRead(AuditLogCreate):
 
     id: int
     created_at: datetime
+
+
+class DeadLetterTask(BaseModel):
+    task_id: str
+    intent_id: str
+    task_type: str
+    status: str
+    retry_count: int
+    idempotency_key: str
+    payload: dict[str, object]
+    created_at: datetime
+
+
+class DeadLetterItemRead(BaseModel):
+    id: int
+    reason: str
+    deadlettered_at: datetime
+    task: DeadLetterTask

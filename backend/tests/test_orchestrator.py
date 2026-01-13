@@ -5,6 +5,7 @@ import pytest
 
 from audit_log import AuditLogStore
 from orchestrator import Task, TaskPlanner, TaskStateMachine, TaskStatus
+from orchestrator.deadletter_store import DeadLetterStore
 
 
 def test_task_planning_is_deterministic() -> None:
@@ -82,9 +83,41 @@ def test_failure_can_deadletter() -> None:
     )
     connection = sqlite3.connect(":memory:")
     audit_log_store = AuditLogStore(lambda: connection, close_connection=False)
-    machine = TaskStateMachine(audit_log_store=audit_log_store)
+    deadletter_store = DeadLetterStore(lambda: connection, close_connection=False)
+    machine = TaskStateMachine(
+        audit_log_store=audit_log_store,
+        deadletter_store=deadletter_store,
+    )
 
     deadlettered = machine.schedule_retry(task, max_retries=1)
 
     assert deadlettered.status == TaskStatus.deadletter
     assert deadlettered.retry_count == 2
+
+
+def test_deadletter_store_records_retry_exhaustion() -> None:
+    task = Task(
+        task_id="task-3",
+        intent_id="intent-2",
+        task_type="collect_news",
+        status=TaskStatus.failed,
+        retry_count=2,
+        idempotency_key="intent-2:collect_news:none",
+        payload={"topic": "saas"},
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    connection = sqlite3.connect(":memory:")
+    audit_log_store = AuditLogStore(lambda: connection, close_connection=False)
+    deadletter_store = DeadLetterStore(lambda: connection, close_connection=False)
+    machine = TaskStateMachine(
+        audit_log_store=audit_log_store,
+        deadletter_store=deadletter_store,
+    )
+
+    deadlettered = machine.schedule_retry(task, max_retries=2)
+
+    assert deadlettered.status == TaskStatus.deadletter
+    items = deadletter_store.list()
+    assert len(items) == 1
+    assert items[0].task.task_id == "task-3"
+    assert items[0].reason == "retry_limit_exhausted"
