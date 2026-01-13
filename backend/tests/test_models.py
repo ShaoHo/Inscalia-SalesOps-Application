@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import pytest
+
+sqlalchemy = pytest.importorskip("sqlalchemy")
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
