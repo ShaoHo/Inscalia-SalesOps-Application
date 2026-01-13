@@ -76,6 +76,11 @@ class SalesOpsIntent(BaseModel):
     actions: list[IntentAction] = Field(default_factory=list)
 
 
+class MetricsResponse(BaseModel):
+    status: str
+    service: str
+
+
 def validate_intent_schema(payload: dict) -> None:
     validator = Draft7Validator(INTENT_JSON_SCHEMA)
     errors = [
@@ -92,6 +97,11 @@ def validate_intent_schema(payload: dict) -> None:
 @app.get("/health", tags=["health"])
 async def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/metrics", response_model=MetricsResponse, tags=["health"])
+async def metrics() -> MetricsResponse:
+    return MetricsResponse(status="ok", service=settings.app_name)
 
 
 @app.post("/intents", response_model=SalesOpsIntent, tags=["intents"])
