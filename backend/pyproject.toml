@@ -15,6 +15,7 @@ celery = "^5.3.6"
 redis = "^5.0.1"
 jsonschema = "^4.22.0"
 sqlalchemy = "^2.0.30"
+openai = "^1.40.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
