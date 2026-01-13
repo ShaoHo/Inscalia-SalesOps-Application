@@ -12,7 +12,7 @@ jobs:
       run:
         working-directory: backend
     env:
-      OPENAI_API_KEY: test_dummy_key
+      OPENAI_API_KEY: d6ee18fdc6db616b50f54053c93da01ad60fe449
     steps:
       - name: Checkout
         uses: actions/checkout@v4
