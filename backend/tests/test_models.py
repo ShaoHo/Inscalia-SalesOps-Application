@@ -14,6 +14,7 @@ from app.models import (
     Base,
     Contact,
     Email,
+    EmailStep,
     Pipeline,
     Task,
 )
@@ -59,6 +60,14 @@ def test_crud_models(session: Session) -> None:
     email = Email(contact_id=contact.id, address="ada@example.com", version=1)
     session.add(email)
 
+    email_step = EmailStep(
+        contact_id=contact.id,
+        step_number=1,
+        status="scheduled",
+        next_send_at=None,
+    )
+    session.add(email_step)
+
     pipeline = Pipeline(account_id=account.id, name="Enterprise Deal", stage="Discovery", amount_cents=250000)
     session.add(pipeline)
     session.flush()
@@ -98,6 +107,10 @@ def test_crud_models(session: Session) -> None:
     assert refreshed.name == "Inscalia Updated"
     assert session.query(Artifact).count() == 0
     assert session.query(AuditLog).count() == 1
+
+    stored_step = session.query(EmailStep).first()
+    assert stored_step is not None
+    assert stored_step.step_number == 1
 
 
 def test_email_versions_are_immutable(session: Session) -> None:
@@ -143,6 +156,16 @@ def test_constraints_enforced(session: Session) -> None:
 
     bad_email = Email(contact_id=9999, address="missing@example.com", version=2)
     session.add(bad_email)
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
+
+    email_step = EmailStep(contact_id=contact.id, step_number=1, status="scheduled")
+    session.add(email_step)
+    session.commit()
+
+    duplicate_step = EmailStep(contact_id=contact.id, step_number=1, status="scheduled")
+    session.add(duplicate_step)
     with pytest.raises(IntegrityError):
         session.commit()
     session.rollback()
