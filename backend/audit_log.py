@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlparse
+from apps.api.services.audit_log.store import get_default_audit_log_store
 
 import psycopg
 
