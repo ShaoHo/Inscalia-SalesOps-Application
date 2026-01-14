@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from apps.api.services.intent_validator import IntentValidationError, SalesOpsIntent, validate_intent_schema
-from apps.api.services.llm_intent_parser import parse_intent
+from apps.api.services import llm_intent_parser
 from apps.api.services.orchestrator import map_tasks_to_celery, plan_tasks_for_intent
 
 router = APIRouter(prefix="/intents", tags=["intents"])
@@ -28,7 +28,7 @@ class IntentResponse(BaseModel):
 @router.post("", response_model=IntentResponse)
 async def create_intent(payload: IntentRequest) -> IntentResponse:
     intent_id = payload.intent_id or str(uuid4())
-    intent_payload = parse_intent(payload.raw_text, payload.language, intent_id)
+    intent_payload = llm_intent_parser.parse_intent(payload.raw_text, payload.language, intent_id)
     try:
         intent = validate_intent_schema(intent_payload)
     except IntentValidationError as exc:
